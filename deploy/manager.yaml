@@ -1,0 +1,79 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: data
+  namespace: mirrors
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tunasync-manager
+  namespace: mirrors
+  labels:
+    app: tunasync-manager
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: tunasync-manager
+  template:
+    metadata:
+      labels:
+        app: tunasync-manager
+    spec:
+      containers:
+        - name: tunasync-manager
+          image: ztelliot/tunasync_manager:latest
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: TZ
+            value: Asia/Shanghai
+          livenessProbe:
+            tcpSocket:
+              port: 14242
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+            periodSeconds: 30
+            successThreshold: 1
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: 14242
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 5
+          volumeMounts:
+            - mountPath: /var/lib/tunasync
+              name: data
+          ports:
+            - name: api
+              containerPort: 14242
+              protocol: TCP
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: tunasync-manager
+  name: tunasync-manager
+  namespace: mirrors
+spec:
+  ports:
+  - port: 14242
+    protocol: TCP
+    targetPort: 14242
+  selector:
+    app: tunasync-manager

@@ -1,0 +1,172 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: controller
+  namespace: mirrors
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: controller
+  namespace: mirrors
+rules:
+  - apiGroups: [ "", "apps" ]
+    resources: [ "daemonsets", "persistentvolumeclaims" ]
+    verbs: [ "get", "watch", "list", "create", "update", "patch" ]
+  - apiGroups: [ "", "apps" ]
+    resources: [ "configmaps", "services", "deployments" ]
+    verbs: [ "get", "watch", "list", "create", "update", "patch", "delete" ]
+  - apiGroups: [ "" ]
+    resources: [ "pods" ]
+    verbs: [ "get", "watch", "list", "update", "patch", "delete", "exec" ]
+  - apiGroups: [ "" ]
+    resources: [ "pods/exec" ]
+    verbs: [ "create", "get" ]
+  - apiGroups: [ "metrics.k8s.io" ]
+    resources: [ "pods" ]
+    verbs: [ "get", "watch", "list" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mirrors-controller
+rules:
+  - apiGroups: [ "" ]
+    resources: [ "nodes" ]
+    verbs: [ "get", "watch", "list" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: controller
+  namespace: mirrors
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: controller
+subjects:
+  - kind: ServiceAccount
+    name: controller
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mirrors-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mirrors-controller
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: mirrors
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: controller-conf
+  namespace: mirrors
+data:
+  config.yaml: |-
+    manager:
+      name: tunasync-manager
+      port: 14242
+      image: ztelliot/tunasync_manager:latest
+    namespace: mirrors
+    storageClass: general
+    front:
+      name: front
+      image: caddy:latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller
+  namespace: mirrors
+  labels:
+    app: controller
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: controller
+  template:
+    metadata:
+      labels:
+        app: controller
+    spec:
+      containers:
+        - name: controller
+          image: controller
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /refresh?update=true
+              port: 8080
+            initialDelaySeconds: 30
+            timeoutSeconds: 30
+            periodSeconds: 600
+            successThreshold: 1
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 10
+          volumeMounts:
+            - mountPath: /var/lib/tunasync
+              name: data
+            - name: controller-conf
+              mountPath: /usr/src/app/config.yaml
+              subPath: config.yaml
+          ports:
+            - name: fastapi
+              containerPort: 8080
+              protocol: TCP
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data
+        - name: controller-conf
+          configMap:
+            name: controller-conf
+      serviceAccountName: controller
+      serviceAccount: controller
+      imagePullSecrets:
+        - name: 
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: controller
+  name: controller
+  namespace: mirrors
+spec:
+  ports:
+    - port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    app: controller
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: controller
+  namespace: mirrors
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`mirrorscreator`)
+      kind: Rule
+      services:
+        - name: controller
+          port: 8080
+      middlewares:
+        - name: traefik-forward-auth

@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddy-conf
+  namespace: mirrors
+data:
+  Caddyfile: |
+    :80 {
+        root * /usr/share/caddy/
+        log {
+            output stdout
+        }
+        file_server {
+            hide .data
+        }
+        route /static/tunasync.json {
+            uri replace /static/tunasync.json /jobs
+            reverse_proxy http://tunasync-manager:14242
+        }
+    }
+    :9090 {
+        reverse_proxy http://127.0.0.1:2019 {
+            header_up Host localhost:2019
+        }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: front
+  name: front
+  namespace: mirrors
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 80
+    name: front
+  - port: 9090
+    protocol: TCP
+    targetPort: 9090
+    name: admin
+  selector:
+    app: front
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: front
+  namespace: mirrors
+  labels:
+    app: front
+spec:
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: front
+  template:
+    metadata:
+      labels:
+        app: front
+    spec:
+      containers:
+        - name: front
+          image: caddy:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+            periodSeconds: 30
+            successThreshold: 1
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            failureThreshold: 5
+          volumeMounts:
+            - mountPath: /etc/caddy/Caddyfile
+              name: caddy-conf
+              subPath: Caddyfile
+              readOnly: true
+            - mountPath: /usr/share/caddy/static
+              name: static
+              readOnly: true
+            - mountPath: /usr/share/caddy/status.html
+              name: status-html
+              subPath: status.html
+              readOnly: true
+          ports:
+            - name: front
+              containerPort: 80
+              protocol: TCP
+            - name: admin
+              containerPort: 9090
+              protocol: TCP
+      volumes:
+        - name: caddy-conf
+          configMap:
+            name: caddy-conf
+        - name: static
+          configMap:
+            name: mirrors-static
+        - name: status-html
+          configMap:
+            name: status-html
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mirrors-static
+  namespace: mirrors
+data:
+  isoinfo.json: |
+    []
+  news.json: |
+    []
+  proxies.json: |
+    []
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: status-html
+  namespace: mirrors
+data:
+  status.html: |
+    "<p>OK.</p>"
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: mirrors
+  namespace: mirrors
+spec:
+  entryPoints:
+  - web
+  routes:
+  - match: Host(`mirrors`)
+    kind: Rule
+    services:
+    - name: front
+      port: 80

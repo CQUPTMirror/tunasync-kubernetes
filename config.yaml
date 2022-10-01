@@ -1,0 +1,16 @@
+apiServer:
+  url:
+  token:
+  ca:
+manager:
+  name: tunasync-manager
+  port: 14242
+  image: ztelliot/tunasync_manager:latest
+namespace: mirrors
+storageClass: general
+node:
+front:
+  name: front
+  image: caddy:latest
+  imagePullSecrets:
+imagePullSecrets:

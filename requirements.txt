@@ -1,0 +1,7 @@
+configobj
+kubernetes_asyncio
+aiohttp
+PyYAML
+uvicorn
+fastapi
+pydantic
